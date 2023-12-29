@@ -1,0 +1,155 @@
+#!/usr/local/bin/node
+
+const { join, relative } = require('path');
+const { existsSync, mkdirSync } = require('fs');
+const { writeFile, readFile, readdir, stat, exists } = require('fs/promises');
+const yargs = require("yargs");
+const all = Promise.all;
+
+let shaderList = require("./meta");
+
+const args = yargs
+  .command("new <name>")
+  .option("watch", { boolean: true })
+  .parse()
+
+
+async function checkFolder(folder) {
+  if (!existsSync(folder)) {
+    await mkdirSync(folder, { recursive: true });
+  } else {
+    console.log(`${folder} 已经存在`);
+  }
+}
+
+async function isDir(path) {
+  return (await stat(path)).isDirectory();
+}
+async function isFile(path) {
+  return (await stat(path)).isFile();
+}
+
+async function getDirChildren(dirpath, filter) {
+  const children = (await readdir(dirpath)).map((subdir) => join(dirpath, subdir));
+  return filter ? await all(children.filter(filter)) : children;
+}
+
+function getShaderName(path) {
+  return relative("shaders", path).split("/")[0];
+}
+
+function getInfo(name) {
+  const infoIndex = shaderList.findIndex((shaderInfo) => shaderInfo.name === name);
+  let shaderInfo = shaderList[infoIndex] ?? {};
+  return (shaderList[infoIndex] = shaderInfo);
+}
+
+function remove(list, matcher) {
+  const index = list.findIndex(matcher);
+  if (index < 0) {
+    return;
+  }
+  list.split(index, 1);
+}
+
+function tryToAddVertex(namePath, info = getInfo(namePath)) {
+  const name = namePath.match(/.*shaders\/.*\/(.*\.vert)/)[1];
+  if (name) info.vertex.push(name);
+}
+function tryToRemoveVertex(namePath, info = getInfo(namePath)) {
+  const name = namePath.match(/.*shaders\/.*\/(.*\.vert)/)[1];
+  if (name) remove(info.vertex, (vertex) => vertex.name === name);
+}
+
+
+function tryToAddFragment(namePath, info = getInfo(namePath)) {
+  const name = namePath.match(/.*shaders\/.*\/(.*\.frag)/)[1];
+  if (name) info.fragment.push(name);
+}
+function tryToRemoveFragment(namePath, info = getInfo(namePath)) {
+  const name = namePath.match(/.*shaders\/.*\/(.*\.frag)/)[1];
+  if (name) remove(info.fragment, (fragment) => fragment.name === name);
+}
+
+
+async function tryToEnableScript(namePath, info = getInfo(namePath)) {
+  if (await exists(join(namePath, "script.js"))) {
+    info.script = true;
+  }
+}
+async function tryToDisableScript(namePath, info = getInfo(namePath)) {
+  if (/.*shaders\/.*\/(script\.js)/.test(namePath)) {
+    info.script = false;
+  }
+}
+
+async function remapShaderMeta(name) {
+  const d = await getDirChildren(join("shaders", name), isDir);
+  const info = d.reduce(async (info, namePath) => {
+    await all([
+      tryToEnableScript,
+      tryToAddVertex,
+      tryToAddFragment
+    ].map(fn => fn(namePath, info)));
+    
+    return info
+  }, { script: false, vertex: [], fragment: [] })
+
+  shaderList.push(info);
+}
+
+async function rewriteToMeta() {
+  await writeFile("./meta.json", JSON.stringify(shaderList));
+}
+
+async function create(name) {
+  const namePath = `shaders/${name}`;
+  await checkFolder(namePath);
+  await all[createDefaultShaderFiles(name), newShaderMetaThenRewrite(name)];
+}
+
+async function createDefaultShaderFiles(name) {
+  const namePath = `shaders/${name}`;
+  await Promise.all[
+    writeFile(join(namePath, `${name}.vert`), await readFile("templates/vert")),
+    writeFile(join(namePath, `${name}.frag`), await readFile("templates/frag"))
+  ];
+}
+
+async function newShaderMetaThenRewrite(name) {
+  shaderList.push({ name, script: true, fragment: [`${name}.vert`], vertex: `${name}.frag` });
+  rewriteToMeta();
+}
+
+if (args.name) {
+  create(args.name);
+  return;
+}
+
+if (args.watch) {
+  watch();
+}
+
+async function watch() {
+  shaderList = [];
+  await all((await getDirChildren("shaders", isDir)).map(remapShaderMeta));
+  await rewriteToMeta();
+
+  const chokidar = require('chokidar');
+  // 监听文件或目录
+  const watcher = chokidar.watch('./shaders');
+
+  // 监听添加事件
+  watcher.on('add', path => {
+    [tryToAddVertex, tryToAddFragment, tryToEnableScript]
+      .map(call => call(path));
+    rewriteToMeta();
+  });
+
+  // 监听删除事件
+  watcher.on('unlink', path => {
+    [tryToRemoveVertex, tryToRemoveFragment, tryToDisableScript]
+      .map(call => call(path));
+    rewriteToMeta();
+  });
+}

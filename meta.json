@@ -1,0 +1,1 @@
+[{"name":"shaders/sdf","script":true,"fragment":["shaders/sdf.vert"],"vertex":"shaders/sdf.frag"},{"name":"sdf","script":true,"fragment":["sdf.vert"],"vertex":"sdf.frag"}]

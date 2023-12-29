@@ -1,0 +1,22 @@
+html {
+    height: 100%;
+}
+
+body {
+    min-height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+#stage {
+    margin: 4px;
+    height: 400px;
+    display: flex;
+    flex-direction: column;
+}
+
+#stage>canvas {
+    flex: 1;
+    border: 1px solid rebeccapurple;
+}
